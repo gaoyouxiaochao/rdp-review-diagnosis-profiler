@@ -215,6 +215,10 @@ def test_order_block_is_opposite_candle():
 # ---------- 共振：不重复计票 ----------
 
 def test_confluence_votes_are_single_sourced():
+    import pytest
+    kdir = ROOT / "data" / "klines"
+    if not kdir.is_dir() or not any(kdir.glob("*.json")):
+        pytest.skip("集成测试：需要本地行情缓存 data/klines（先运行 tools/fetch_klines.py）")
     targets = json.loads((ROOT / "data" / "targets.json").read_text(encoding="utf-8"))
     profiles, _ = build_all(targets[:20])
     assert profiles
@@ -279,6 +283,7 @@ def test_loader_missing_file_raises():
 def test_loader_dedupes_duplicate_dates():
     from rdp.core.loader import load_bars
     kdir = ROOT / "data" / "klines"
+    kdir.mkdir(parents=True, exist_ok=True)
     dup = kdir / "__dup_test__.json"
     dup.write_text(json.dumps({"code": "__dup_test__", "bars": [
         {"date": "2026-01-02", "open": 1, "high": 2, "low": 1, "close": 2, "volume": 1},
@@ -331,3 +336,94 @@ def test_profile_contract_complete():
         for s in [x for r in p.engines.values() for x in r.signals]:
             assert s.formed_at and s.engine and s.kind
             assert s.evidence, f"{p.code} 信号缺少证据链"
+
+
+# ---------- Round 7: guard 专项复核复现测试 ----------
+
+def _mk_bars(n=160):
+    from rdp.schema import Bar
+    bars = []
+    for i in range(n):
+        bars.append(Bar(date=f"2026-{(i//28)%12+1:02d}-{(i%28)+1:02d}",
+                        open=10.0, high=10.5, low=9.5, close=10.2,
+                        volume=1000 + i, amount=None))
+    return bars
+
+
+def test_d1_historical_as_of_no_false_positive():
+    """D1: 历史 --as-of 时，信号在 as_of 之后才确认（合法）不应被判违规。
+
+    引擎行为确定性：永远在 formed=100 形成、120 确认（confirm_bars=20）。
+    as_of_idx=110 时，截断结果里它是 candidate（截断口径正确），
+    但全量结果里 confirmed_idx=120 > as_of_idx=110 —— 这是合法的"未来确认"，
+    不应触发 "确认日超出 as_of"。
+    """
+    from rdp.schema import EngineResult, Signal, CONFIRMED, CANDIDATE
+    from rdp.core.guard import check_engine
+
+    def eng(bars):
+        sigs = []
+        if len(bars) > 100:
+            confirmed = len(bars) > 120
+            sigs.append(Signal(
+                engine="mock", kind="brk", direction="bull",
+                state=CONFIRMED if confirmed else CANDIDATE,
+                formed_at=bars[100].date, formed_idx=100,
+                confirmed_at=bars[120].date if confirmed else None,
+                confirmed_idx=120 if confirmed else None,
+                confirm_bars=20,
+            ))
+        return EngineResult(engine="mock", ok=True, signals=sigs, metrics={})
+
+    bars = _mk_bars(160)
+    rep = check_engine("mock", eng, bars, as_of_idx=110)
+    assert rep.passed, f"D1 复现：历史 as_of 误报 -> {rep.samples}"
+
+
+def test_d2_invalidated_then_confirmed_is_repaint():
+    """D2: 截断时 invalidated、全量变 confirmed —— 典型的重绘，必须判 FAIL。
+
+    当前 STATE_RANK 把 confirmed/invalidated 同级(=1)，该回退检测不到。
+    """
+    from rdp.schema import EngineResult, Signal, CONFIRMED, INVALIDATED
+    from rdp.core.guard import check_engine
+
+    def eng(bars):
+        # 截断(101..131根)视角：信号已失效；更长历史视角：又"确认"了（重绘）
+        if len(bars) <= 100:
+            return EngineResult(engine="mock", ok=True, signals=[], metrics={})
+        state = INVALIDATED if len(bars) <= 131 else CONFIRMED
+        sigs = [Signal(
+            engine="mock", kind="spring", direction="bull", state=state,
+            formed_at=bars[90].date, formed_idx=90,
+            confirmed_at=bars[100].date if state == CONFIRMED else None,
+            confirmed_idx=100 if state == CONFIRMED else None,
+            invalidated_at=bars[min(110, len(bars) - 1)].date if state == INVALIDATED else None,
+            invalidated_idx=min(110, len(bars) - 1) if state == INVALIDATED else None,
+            confirm_bars=10,
+        )]
+        return EngineResult(engine="mock", ok=True, signals=sigs, metrics={})
+
+    bars = _mk_bars(160)
+    rep = check_engine("mock", eng, bars, as_of_idx=130)
+    assert not rep.passed, "D2 复现：invalidated->confirmed 重绘未被检出"
+
+
+def test_all_engines_survive_truncated_data():
+    """场景测试：截断/短数据下六引擎不得崩溃，体检降级不误判。"""
+    from rdp.core.guard import check_engine_result, MIN_CUT_BARS
+    short = BARS[: MIN_CUT_BARS - 20]
+    for fn in ALL_ENGINES:
+        rep, res = check_engine_result(fn.__module__.split(".")[-1], fn, short, len(short) - 1)
+        assert rep is not None and res is not None  # 不抛异常即底线
+
+
+def test_confluence_invalidated_event_votes_against():
+    """场景测试：已失效事件必须投反向票(-1)，不得按原方向计票。"""
+    from rdp.core.confluence import _timeliness
+    from rdp.schema import Signal, CONFIRMED, BULL
+    s = Signal(engine="pattern", kind="double_bottom", direction=BULL, state=CONFIRMED,
+               formed_at="d", formed_idx=90, confirmed_at="d", confirmed_idx=95,
+               confirm_bars=5, price=1.0, invalidated_idx=98, evidence={})
+    _, v, _ = _timeliness([s], last_idx=100)
+    assert v == -1, f"失效事件应投 -1，实得 {v}"

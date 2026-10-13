@@ -15,8 +15,9 @@
        一根 K 线，任何切点下都只会落在末尾，比了必误报，故排除。
     2. 只比"已过确认窗"的信号：formed_idx + confirm_bars <= t。未过确认窗的
        信号在截断处本来就不该出现，比了也是误报。
-    3. 状态只允许单向推进：cut 里是 candidate、full 里变成 confirmed 合法；
-       反过来（cut 已确认、full 退回候选）就是重绘，判 FAIL。
+    3. 状态只允许单向推进（candidate→confirmed→invalidated，rank 0/1/2）：
+       cut 里是 candidate、full 里变成 confirmed/invalidated 合法；任何回退
+       （含 invalidated→confirmed 这类"失效又复活"的重绘）判 FAIL。
 """
 from __future__ import annotations
 
@@ -52,8 +53,15 @@ def _rank(state: str) -> int:
     return STATE_RANK.get(state, 0)
 
 
-def check_confirm_consistency(signals: list[Signal], as_of_idx: int) -> tuple[int, list[str]]:
-    """确认时间必须 >= 形成时间 + confirm_bars，且不得超过 as_of。"""
+def check_confirm_consistency(
+    signals: list[Signal], as_of_idx: int | None = None
+) -> tuple[int, list[str]]:
+    """确认时间必须 >= 形成时间 + confirm_bars；as_of_idx 非空时确认不得晚于它。
+
+    as_of 上界只应施加在"按 as_of 截断口径"的结果上：历史 --as-of 场景下，
+    信号在 as_of 之后才确认是合法的（截断结果里它仍是 candidate），
+    若拿全量结果套 as_of 上界必然误报（缺陷 D1）。
+    """
     bad = 0
     samples: list[str] = []
     for s in signals:
@@ -61,7 +69,7 @@ def check_confirm_consistency(signals: list[Signal], as_of_idx: int) -> tuple[in
             if s.confirmed_idx < s.formed_idx + s.confirm_bars:
                 bad += 1
                 samples.append(f"{s.engine}/{s.kind}@{s.formed_at}: 确认早于 confirm_bars({s.confirm_bars})")
-            if s.confirmed_idx > as_of_idx:
+            if as_of_idx is not None and s.confirmed_idx > as_of_idx:
                 bad += 1
                 samples.append(f"{s.engine}/{s.kind}@{s.formed_at}: 确认日超出 as_of")
         if s.invalidated_idx is not None and s.formed_idx is not None:
@@ -101,6 +109,7 @@ def check_engine(
     若调用方先截断了 bars，体检会退化成单点空转 —— 这是本函数要消灭的病。
     """
     full = fn(bars)
+    truncated = fn(bars[: as_of_idx + 1])
     cuts = _cut_points(as_of_idx)
 
     mismatched = 0
@@ -129,8 +138,12 @@ def check_engine(
                         f"切点{t} 状态回退 {cs.kind}@{cs.formed_at}: {cs.state}->{fs.state}")
         regressions += back
 
-    confirmed_viol, csamples = check_confirm_consistency(full.signals, as_of_idx)
-    samples = (samples + csamples)[:8]
+    # 时序合法性：形成/确认/失效的先后关系对全量结果校验（与 as_of 无关）；
+    # as_of 上界只对截断口径的结果校验（D1 修复：历史 as_of 不误报）。
+    confirmed_viol, csamples = check_confirm_consistency(full.signals)
+    tv, tsamples = check_confirm_consistency(truncated.signals, as_of_idx)
+    confirmed_viol += tv
+    samples = (samples + csamples + tsamples)[:8]
 
     passed = (mismatched == 0 and regressions == 0 and confirmed_viol == 0)
     if not full.ok and cuts:

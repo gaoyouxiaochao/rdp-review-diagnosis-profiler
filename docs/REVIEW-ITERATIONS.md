@@ -84,3 +84,44 @@
 **验证**：`python -m pytest tests/ -q` → **25 passed**。
 
 
+## Round 7 —— 交付核验：guard 专项复核 D1/D2 修复 + 干净环境测试加固（2026-10-14）
+
+**背景**：外部专家评审前交付核验，对 `core/guard.py` 做专项复核，先复现后修复，不做无关重构。
+
+### 缺陷说明（修复前）
+
+- **D1（P1）历史 `--as-of` 误报**：`check_engine` 拿**全量**结果 `full.signals`
+  套 `confirmed_idx <= as_of_idx` 上界。历史基准日场景下，信号在 as_of 之后才确认
+  完全合法（截断结果里它仍是 candidate），却被判"确认日超出 as_of"→ 体检 FAIL。
+  影响范围：所有 `--as-of < 最新交易日` 的运行。
+  复现：`test_d1_historical_as_of_no_false_positive`（修复前失败）。
+- **D2（P2）confirmed/invalidated 同级漏检**：`STATE_RANK` 把两者都定为 1，
+  "截断时 invalidated、更长历史变 confirmed"这类失效复活型重绘检测不到。
+  影响范围：防未来函数体检的单调性断言存在盲区。
+  复现：`test_d2_invalidated_then_confirmed_is_repaint`（修复前失败）。
+
+### 修改（最小范围）
+
+- `schema.py`：`STATE_RANK` 改为 candidate=0 / confirmed=1 / **invalidated=2**
+  （仅 guard 使用，无其他消费方，已 grep 确认）。
+- `guard.py`：
+  - `check_confirm_consistency(signals, as_of_idx=None)`：as_of 上界改为可选；
+    全量结果只校验时序合法性（确认≥形成+confirm_bars、失效≥形成），
+    as_of 上界只施加在**截断口径**结果上（D1 修复）。
+  - 铁律 3 文档同步为 candidate→confirmed→invalidated 单向推进。
+
+### 干净环境测试加固（核验中发现）
+
+- `test_confluence_votes_are_single_sourced`：依赖本地行情缓存，干净克隆必挂 →
+  改为无缓存时 `pytest.skip`（标注为集成测试）。
+- `test_loader_dedupes_duplicate_dates`：`data/klines/` 不存在时写文件失败 →
+  补 `mkdir(parents=True, exist_ok=True)`。
+
+### 新增场景测试（25 → 29）
+
+- `test_d1_historical_as_of_no_false_positive` / `test_d2_invalidated_then_confirmed_is_repaint`：上述缺陷回归。
+- `test_all_engines_survive_truncated_data`：短数据（<MIN_CUT_BARS）下六引擎不崩溃、体检降级不误判。
+- `test_confluence_invalidated_event_votes_against`：已失效事件时效票必须为 -1。
+
+**验证**：`python -m pytest tests/ -q` → **28 passed, 1 skipped**（干净环境，无行情缓存；
+skipped 为集成测试）。D 盘全量环境（有缓存）复跑确认 guard 196/196 不受影响。

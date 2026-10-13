@@ -22,7 +22,7 @@ SCOPE_EVENT = "event"
 SCOPE_STATE = "state"
 
 # 状态推进的单调序：candidate -> confirmed/invalidated 只允许单向前进
-STATE_RANK = {CANDIDATE: 0, CONFIRMED: 1, INVALIDATED: 1}
+STATE_RANK = {CANDIDATE: 0, CONFIRMED: 1, INVALIDATED: 2}
 
 # 共振结论
 CONF_BULL = "bull_confluence"

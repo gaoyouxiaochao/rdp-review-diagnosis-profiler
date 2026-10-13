@@ -9,7 +9,9 @@
   目标是单独抽出一套**因果、可审计、无未来函数**的复盘诊断能力，独立成模块。
 - **评审状态（2026-10-14）**：已做一轮六维全面评审（`docs/REVIEW.md`），
   发现并修复 **P0 × 2**（订单块方向反转、时效维度恒投+1）与 **P1 × 6**，
-  迭代记录见 `docs/REVIEW-ITERATIONS.md`。当前 pytest 25 passed、防未来函数体检 196/196。
+  迭代记录见 `docs/REVIEW-ITERATIONS.md`。最新（Round 7 后）：pytest 28 passed + 1 skipped
+  （干净环境；集成测试需行情缓存），防未来函数体检 196/196。
+  **外部评审专家请从 `docs/EXPERT-HANDOFF.md` 开始。**
   **欢迎外部专家基于 `docs/REVIEW.md` 遗留清单继续评审。**
 
 ## 1. 它做什么
