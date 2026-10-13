@@ -66,6 +66,9 @@
 cd <模块根目录>
 set PYTHONIOENCODING=utf-8
 
+# 0) 安装依赖（运行+测试）
+pip install -r requirements-dev.txt
+
 # 1) 抓行情（已有则跳过；--force 强制重抓）
 python tools/fetch_klines.py --all
 
@@ -86,6 +89,8 @@ python -m pytest tests/ -q
 - `profiles.json` —— 全量结构化画像（引擎指标、信号明细、闸门报告、共振、评分卡）
 - `复盘诊断画像_汇总.xlsx` —— 5 个表：画像总览 / 信号明细 / 引擎指标 / 防未来函数体检 / 六维评分卡
 - `复盘诊断画像报告.html` —— 可排序可筛选的全池排名表 + Top24 详情卡 + 方法论与免责声明
+
+> **首次运行说明**：诊断命令依赖本地行情缓存 `data/klines/*.json`，请先执行 `python tools/fetch_klines.py --all`（全池约 196 只，内置限流与重试，腾讯行情接口偶发 WAF 限流属预期，重跑即可续抓）。股票池清单 `data/targets.json` 已随仓库提交，无需手工准备。
 
 ## 4. 当前验收结果（基准日 2026-10-13）
 
