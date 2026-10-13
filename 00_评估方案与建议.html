@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>复盘诊断分析画像模块 — 评估方案与建议</title>
+<style>
+:root{
+  --bg:#f7f8fa; --surface:#ffffff; --border:#e3e6eb; --border-strong:#cfd4db;
+  --text:#1a1d21; --text-2:#5c6470; --text-3:#8a929e;
+  --primary:#1f6feb; --primary-soft:#eaf2ff;
+  --ok:#0f8a4f; --ok-soft:#e7f6ee; --warn:#b45309; --warn-soft:#fef4e7;
+  --bad:#b42318; --bad-soft:#fdeceb; --neutral-soft:#f1f3f6;
+  --radius:12px; --radius-sm:8px;
+  --font:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+  --mono:"Cascadia Mono",Consolas,"Courier New",monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.7;font-size:15px}
+.wrap{max-width:1040px;margin:0 auto;padding:32px 24px 64px}
+header.hero{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px 28px 24px;margin-bottom:20px}
+.hero .kicker{font-size:12px;letter-spacing:.08em;color:var(--text-3);text-transform:uppercase}
+.hero h1{font-size:26px;margin:6px 0 10px;font-weight:650}
+.hero p{color:var(--text-2);font-size:14px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.chip{font-size:12px;padding:3px 10px;border-radius:99px;background:var(--neutral-soft);color:var(--text-2);border:1px solid var(--border)}
+.chip.ok{background:var(--ok-soft);color:var(--ok);border-color:transparent}
+.chip.warn{background:var(--warn-soft);color:var(--warn);border-color:transparent}
+h2{font-size:19px;margin:34px 0 14px;padding-left:12px;border-left:4px solid var(--primary)}
+h3{font-size:15.5px;margin:20px 0 10px}
+p{margin-bottom:10px;color:var(--text)}
+.lead{color:var(--text-2)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 22px;margin-bottom:16px}
+.verdict{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:18px 0}
+.verdict .item{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px}
+.verdict .q{font-size:12.5px;color:var(--text-3);margin-bottom:4px}
+.verdict .a{font-size:14.5px;font-weight:600}
+.verdict .a.good{color:var(--ok)} .verdict .a.risk{color:var(--warn)} .verdict .a.info{color:var(--text)}
+table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--surface)}
+th,td{padding:9px 12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+th{background:var(--neutral-soft);font-weight:600;color:var(--text-2);font-size:12.5px;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+.tbl{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin:12px 0;overflow-x:auto}
+code{font-family:var(--mono);font-size:12.5px;background:var(--neutral-soft);padding:1px 5px;border-radius:4px}
+.tag{display:inline-block;font-size:11.5px;padding:2px 8px;border-radius:99px;font-weight:600;white-space:nowrap}
+.tag.reco{background:var(--ok-soft);color:var(--ok)}
+.tag.rewrite{background:var(--primary-soft);color:var(--primary)}
+.tag.no{background:var(--bad-soft);color:var(--bad)}
+.tag.mid{background:var(--warn-soft);color:var(--warn)}
+.tag.low{background:var(--neutral-soft);color:var(--text-2)}
+.pass{color:var(--ok);font-weight:600}
+.fail{color:var(--bad);font-weight:600}
+.warn{color:var(--warn);font-weight:600}
+.defs{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:14px 0}
+.def{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px}
+.def .name{font-size:16px;font-weight:650;margin-bottom:2px}
+.def .en{font-size:12px;color:var(--text-3);margin-bottom:10px}
+.def ul{margin:0 0 0 18px;color:var(--text-2);font-size:13.5px}
+.def li{margin-bottom:5px}
+.layers{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin:14px 0}
+.layer{padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border);text-align:center}
+.layer:last-child{border-bottom:none}
+.layer .t{font-weight:650;font-size:14.5px}
+.layer .d{font-size:12.5px;color:var(--text-3);margin-top:2px}
+.layer.hl{background:var(--primary-soft)}
+.arrow{padding:6px;background:var(--neutral-soft);color:var(--text-3);text-align:center;font-size:14px}
+.miles{margin:14px 0}
+.mile{display:flex;gap:14px;align-items:flex-start;padding:10px 0;border-bottom:1px dashed var(--border)}
+.mile:last-child{border-bottom:none}
+.mile .m{font-family:var(--mono);font-weight:700;color:var(--primary);min-width:42px;font-size:13px}
+.mile .c{flex:1;font-size:14px}
+.mile .c small{display:block;color:var(--text-3);font-size:12.5px}
+.mile .t{font-size:12.5px;color:var(--text-2);white-space:nowrap;padding-top:2px}
+.note{background:var(--warn-soft);border:1px solid transparent;border-left:4px solid var(--warn);border-radius:var(--radius-sm);padding:14px 16px;font-size:13.5px;color:var(--text);margin:14px 0}
+.note b{color:var(--warn)}
+.good{background:var(--ok-soft);border-left:4px solid var(--ok)}
+.quests{counter-reset:q}
+.quest{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
+.quest:last-child{border-bottom:none}
+.quest .n{counter-increment:q;min-width:26px;height:26px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600}
+.quest .n::before{content:counter(q)}
+.quest .body{flex:1}
+.quest .body b{font-size:14.5px}
+.quest .body small{display:block;color:var(--text-2);font-size:13px;margin-top:2px}
+footer{margin-top:36px;padding-top:16px;border-top:1px solid var(--border);color:var(--text-3);font-size:12.5px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="kicker">MVP 开发专家团 · 项目总监 · Phase 0 评估</div>
+  <h1>复盘诊断分析画像模块 — 评估方案与建议</h1>
+  <p>输入：ChatGPT《开源方案比选》单轮问答（约 1.3 万字）+ 现有 8 模块系统面板截图。落地位置：<code>E:\个人文件夹\郑超4季度\复盘诊断画像模块\</code></p>
+  <div class="meta">
+    <span class="chip ok">结论：能做</span>
+    <span class="chip">MVP 约 4 人日</span>
+    <span class="chip warn">最高风险：未来函数</span>
+    <span class="chip">数据源已实测可用</span>
+  </div>
+</header>
+
+<section>
+  <h2>一、结论先行</h2>
+  <div class="card">
+    <p class="lead">能做，且建议做——但不是"照抄开源项目"，而是引入其中的 <b>4 套机制 + 2 条硬纪律</b>。开源的正确打开方式不是搬代码，而是把<b>算法规则和输出契约</b>搬进来，再用你自己的样本对拍验证。</p>
+    <div class="verdict">
+      <div class="item"><div class="q">能否独立引入开源机制</div><div class="a good">能</div></div>
+      <div class="item"><div class="q">工作量（MVP）</div><div class="a info">约 4 人日</div></div>
+      <div class="item"><div class="q">最大风险</div><div class="a risk">未来函数 / 信号重绘</div></div>
+      <div class="item"><div class="q">行情数据</div><div class="a good">实测可用</div></div>
+      <div class="item"><div class="q">与现有 8 模块的关系</div><div class="a info">自带轻量实现，契约对接，不反向改造</div></div>
+      <div class="item"><div class="q">聊天记录完整性</div><div class="a good">双源对拍一致</div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>二、聊天记录里到底有什么</h2>
+  <div class="card">
+    <p>单轮问答：你贴了 8 模块系统截图，要求"GitHub 上找类似开源方案，每个模块梳理 3 个热点项目做比选"。GPT-6 回答共 5 部分：</p>
+    <div class="tbl"><table>
+      <tr><th style="width:52px">#</th><th>内容</th><th>对本模块的价值</th></tr>
+      <tr><td>1</td><td>8 模块 × 3 候选 = 24 个选型位（A/B/C 仓库 + 选型意见）</td><td>算法来源地图</td></tr>
+      <tr><td>2</td><td>横向比选表（第一/第二优先候选 + 核心评审重点）</td><td>评审优先级</td></tr>
+      <tr><td>3</td><td>6 维度加权评分模型（0–5 分 → 百分制）</td><td><b>直接引入</b>：画像评分卡</td></tr>
+      <tr><td>4</td><td>整体技术架构（5 层）</td><td><b>直接引入</b>：模块骨架</td></tr>
+      <tr><td>5</td><td>落地前 8 项检查清单 + 两个坑（许可证、回测 ≠ 算法质量）</td><td><b>直接引入</b>：尽调门禁</td></tr>
+    </table></div>
+    <p class="lead">关键区分：24 个候选里<b>一半以上是 Pine Script</b>（TradingView 专有），没有 Python 运行时——代码引不进来，只能把规则翻译过来再对拍。这直接决定"引入"的真实成本。</p>
+  </div>
+</section>
+
+<section>
+  <h2>三、可引入的开源机制清单</h2>
+
+  <h3>A 类 · 直接引入的机制（6 项，推荐全部引入）</h3>
+  <p class="lead">这是聊天记录里最值钱的部分——方法论和输出契约，不是代码，照做即可，零版权风险。</p>
+  <div class="tbl"><table>
+    <tr><th>编号</th><th>机制</th><th>引入到画像模块的哪里</th><th>成本</th></tr>
+    <tr><td><b>M1</b></td><td><b>信号三态状态机</b>：候选 → 确认 → 失效，每个事件必须带 <code>confirmed_at</code> / <code>invalidated_at</code> / <code>evidence</code> / <code>timestamp</code></td><td>诊断引擎核心。复盘第一问就是"这个信号当时是候选还是已确认？后来失效了没有？"</td><td><span class="tag mid">中</span></td></tr>
+    <tr><td><b>M2</b></td><td><b>防未来函数 / 防重绘闸门</b>：第 i 根 K 线只能用 i 及之前的数据；摆动点需 confirm_bars 延迟确认；禁止用后出现的摆动点回填历史信号</td><td>复盘可信度的命门。做成内建校验器，每个引擎输出都过一遍</td><td><span class="tag mid">中</span></td></tr>
+    <tr><td><b>M3</b></td><td><b>6 维度加权评分卡</b>：算法完整性 25 / 信号可靠性 20 / 工程可集成性 20 / 测试与验证 15 / A 股适配性 10 / 许可证与维护 10</td><td>画像的评分层：对信号质量与整体诊断置信度打分</td><td><span class="tag low">低</span></td></tr>
+    <tr><td><b>M4</b></td><td><b>多规则投票共振引擎</b>：趋势 / 结构 / 量价 / 时效 四类状态 → 共振输出；每模块必须给证据、时间戳、确认状态、失效条件；防止同一组原始数据被多个相关指标重复计票</td><td>画像的共振层——正是你截图里选中的"共振面板"的后端化</td><td><span class="tag mid">中</span></td></tr>
+    <tr><td><b>M5</b></td><td><b>分层解耦架构</b>：统一行情层 → 独立引擎 → 统一信号事件引擎 → 面板 → 自动化验证；公共能力全系统只做一份</td><td>模块骨架。防止 8 个引擎各写一套，导致同一高点被标在不同位置</td><td><span class="tag low">低</span></td></tr>
+    <tr><td><b>M6</b></td><td><b>落地尽调 8 项检查清单</b></td><td>每引入一个外部引擎 / 算法时的准入检查表</td><td><span class="tag low">低</span></td></tr>
+  </table></div>
+
+  <h3>B 类 · 只能搬算法规则、必须 Python 重写（7 项）</h3>
+  <div class="tbl"><table>
+    <tr><th>模块</th><th>首选参考源</th><th>语言</th><th>重写难度</th></tr>
+    <tr><td>成交量分布</td><td>mervinj3546/volume-profile</td><td>Pine Script v6</td><td><span class="tag reco">高（易）</span></td></tr>
+    <tr><td>SMC 聪明钱</td><td>joshyattridge/smart-money-concepts</td><td><b>Python</b></td><td><span class="tag reco">高（易）</span></td></tr>
+    <tr><td>背离</td><td>vantradelabs/pine-script-collection</td><td>Pine Script v6</td><td><span class="tag reco">高</span></td></tr>
+    <tr><td>形态识别</td><td>BennyThadikaran/stock-pattern</td><td><b>Python</b></td><td><span class="tag rewrite">中高</span></td></tr>
+    <tr><td>威科夫</td><td>loopofM/wyckoff-indicator</td><td>Pine Script</td><td><span class="tag mid">中（工作量大）</span></td></tr>
+    <tr><td>缠论</td><td>yijixiuxin/chanlun-pro</td><td>Python</td><td><span class="tag mid">中（口径分歧大）</span></td></tr>
+    <tr><td>道氏趋势</td><td>TA-Lib + 自研</td><td>Python + C</td><td><span class="tag mid">中（需自研规则）</span></td></tr>
+  </table></div>
+
+  <h3>C 类 · 不建议引入</h3>
+  <div class="tbl"><table>
+    <tr><th>项</th><th>原因</th></tr>
+    <tr><td>任何 Pine Script 仓库作为运行时依赖</td><td>TradingView 专有，无 Python 运行时，只能当算法说明书</td></tr>
+    <tr><td>TA-Lib 作为必选依赖</td><td>本机实测未安装，Windows 需编译 C 库；用纯 Python 自研常用指标（约 200 行）替代</td></tr>
+    <tr><td>Star 数作为质量指标</td><td>几百行的指标脚本和完整框架不是一个层级的产品</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2>四、「复盘诊断分析画像」的定义（请你确认）</h2>
+  <div class="card">
+    <p class="lead"><b>对一只标的，在指定的"诊断基准日 as_of"，用当时可知的数据，重放 8 个引擎的信号状态，输出一份可审计的结构化画像报告。</b></p>
+    <div class="defs">
+      <div class="def">
+        <div class="name">复盘</div><div class="en">Review</div>
+        <ul><li>时间轴回放：as_of 之前每个信号什么时候候选、什么时候确认、什么时候失效</li><li>依赖 M1 状态机 + M2 防未来函数</li></ul>
+      </div>
+      <div class="def">
+        <div class="name">诊断</div><div class="en">Diagnose</div>
+        <ul><li>有没有用到 as_of 之后的数据？确认延迟多少？证据链完整吗？多信号是否重复计票？</li><li>依赖 M2 + M4</li></ul>
+      </div>
+      <div class="def">
+        <div class="name">画像</div><div class="en">Profile</div>
+        <ul><li>共振画像（趋势 / 结构 / 量价 / 时效 四维）+ 6 维度评分卡 + 结论与风险提示</li><li>依赖 M3 + M4</li></ul>
+      </div>
+    </div>
+    <h3>输入契约（示例）</h3>
+    <pre style="background:var(--neutral-soft);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;font-family:var(--mono);font-size:12.5px;overflow-x:auto">{
+  "code": "sz002245",
+  "as_of": "2026-10-13",
+  "lookback_days": 250,
+  "engines": ["volume_profile", "smc", "divergence", "pattern"],
+  "trades": null
+}</pre>
+    <p class="lead" style="margin-top:10px"><code>trades</code> 可选：若要把你自己的交易记录丢进来做归因（这笔单当时信号是否共振），就传；不传则只做纯技术面画像。输出为 <code>profile.json</code>（机器可读）+ <code>profile.html</code>（人看的画像报告）。</p>
+  </div>
+</section>
+
+<section>
+  <h2>五、可行性核验（本轮实测）</h2>
+  <div class="tbl"><table>
+    <tr><th>核验项</th><th>结果</th><th>证据</th></tr>
+    <tr><td>A 股日线行情（含复权、OHLCV、换手率）</td><td class="pass">可用</td><td>数据源 <code>data_kline</code>：<code>sz002245</code>，<code>fq=qfq</code>，2026-09-30 ~ 10-13 共 5 根，含 open/last/high/low/volume/amount/exchange</td></tr>
+    <tr><td>多周期</td><td class="pass">支持</td><td>day / week / month / season / year + m1~m120 分钟线</td></tr>
+    <tr><td>聊天记录完整获取</td><td class="pass">双源一致</td><td>网页抓取（1.17 MB HTML → 解出 20,809 字完整正文）+ 本地 JSON 导出（12,730 字）对拍一致</td></tr>
+    <tr><td>Python 基础环境</td><td class="pass">齐备</td><td>pandas 2.2.3 / numpy 2.2.0 / duckdb 1.5.5 / plotly 6.9.0 / openpyxl 3.1.5 / jinja2 3.1.6 / pytest 9.1.1 / matplotlib 3.10.6</td></tr>
+    <tr><td>TA-Lib / tushare / akshare / requests</td><td class="fail">未安装</td><td>实测 MISSING，对策见风险 R2</td></tr>
+    <tr><td>现有 8 模块系统</td><td class="warn">界面已确认</td><td>截图识别出 8 模块清单，与聊天记录完全对应；源码位置待你提供</td></tr>
+  </table></div>
+
+  <div class="note">
+    <b>架构发现（数据层）：</b>行情数据是对话内工具，Python 脚本无法直接调用。三种做法，MVP 推荐方式 A：<br>
+    <b>A. 拉数落盘（推荐）</b>——AI 会话拉数 → 写本地 csv/duckdb → 模块纯离线计算。零新增依赖、可复现、可审计。<br>
+    <b>B. 装直连库</b>——隔离 venv 里装 tushare + requests（经代理可通 api.tushare.pro）。自动更新，但需 token。<br>
+    <b>C. 你已有行情文件</b>——直接读 csv/duckdb，最快，但依赖手上有数据。
+  </div>
+</section>
+
+<section>
+  <h2>六、风险与对策</h2>
+  <div class="tbl"><table>
+    <tr><th>编号</th><th>风险</th><th>对策</th></tr>
+    <tr><td><b>R1</b></td><td>现有 8 模块系统源码不在本工作区</td><td>新模块自带轻量引擎实现，只暴露标准输入/输出契约，以后对接写 adapter 即可。<b>不反向改造现有系统</b></td></tr>
+    <tr><td><b>R2</b></td><td>TA-Lib 缺失，Windows 编译 C 库易失败</td><td>纯 Python 向量化自研 MA/EMA/RSI/MACD/ATR/摆动点，配单元测试与公式对拍</td></tr>
+    <tr><td><b>R3</b></td><td>Pine Script 规则翻译可能有出入</td><td>强制样本对拍：同一只票同一区间，重写结果与 TradingView 人工标注逐根核对</td></tr>
+    <tr><td><b>R4</b></td><td><b>未来函数 / 重绘（最高风险）</b></td><td><code>guard.py</code> 内建校验：walk-forward 逐根重算；信号必须带 confirm_bars；输出未来函数体检报告，任一引擎命中即判 FAIL</td></tr>
+    <tr><td><b>R5</b></td><td>缠论各家口径不一致</td><td>MVP 不纳入缠论；若要加，只做"分型 + 笔"最小集，规则口径写成文档锁定</td></tr>
+    <tr><td><b>R6</b></td><td>开源许可证</td><td>引入外部代码前逐仓库核对 LICENSE + 依赖许可证；纯"规则翻译"不构成版权问题，但复制源码必须确认</td></tr>
+    <tr><td><b>R7</b></td><td>8 个引擎全做，范围失控</td><td>MVP 只做 4 个引擎，其余留接口。宁可 4 个做扎实，不要 8 个都半成品</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2>七、建议的分层架构（对应聊天记录第四节）</h2>
+  <div class="layers">
+    <div class="layer"><div class="t">统一行情与数据层</div><div class="d">A 股 OHLCV · 复权 · 多周期 · 交易日历 · 数据质量（csv / duckdb 落盘，零外部依赖）</div></div>
+    <div class="arrow">↓</div>
+    <div class="layer"><div class="t">独立分析引擎（MVP 先 4 个）</div><div class="d">量价分布 · SMC 结构 · 背离 · 形态　|　二期：缠论 · 道氏 · 威科夫 · 共振面板</div></div>
+    <div class="arrow">↓</div>
+    <div class="layer hl"><div class="t">统一信号与事件引擎（本模块核心）</div><div class="d">三态状态机 · 信号确认 · 失效转换 · 证据归档 · 防未来函数闸门</div></div>
+    <div class="arrow">↓</div>
+    <div class="layer"><div class="t">共振投票 + 评分卡</div><div class="d">趋势 / 结构 / 量价 / 时效 四维投票 · 6 维度加权评分 · 诊断结论</div></div>
+    <div class="arrow">↓</div>
+    <div class="layer"><div class="t">画像报告与自动化验证</div><div class="d">HTML 画像报告 · JSON 契约 · 单元测试 · walk-forward 对拍 · 版本对比</div></div>
+  </div>
+</section>
+
+<section>
+  <h2>八、里程碑与验收硬标准</h2>
+  <div class="card">
+    <div class="miles">
+      <div class="mile"><div class="m">M0</div><div class="c">评估与需求确认<small>本文档 + 6 个确认问题</small></div><div class="t">本轮</div></div>
+      <div class="mile"><div class="m">M1</div><div class="c">数据层 + 防未来函数基线 + schema 契约<small>guard.py 最优先写测试</small></div><div class="t">0.5 天</div></div>
+      <div class="mile"><div class="m">M2</div><div class="c">4 个引擎（量价分布 / SMC / 背离 / 形态）+ 事件三态状态机</div><div class="t">1.5 天</div></div>
+      <div class="mile"><div class="m">M3</div><div class="c">共振投票引擎 + 6 维度评分卡</div><div class="t">0.5 天</div></div>
+      <div class="mile"><div class="m">M4</div><div class="c">HTML 画像报告 + CLI 入口</div><div class="t">0.5 天</div></div>
+      <div class="mile"><div class="m">M5</div><div class="c">单元测试 + 样本对拍 + 验收（未来函数体检全绿）</div><div class="t">1 天</div></div>
+    </div>
+    <h3>验收硬标准（先立在这，做完照这个检查）</h3>
+    <div class="tbl"><table>
+      <tr><th style="width:52px">#</th><th>标准</th></tr>
+      <tr><td>1</td><td>pytest 全绿，<code>test_guard.py</code> 覆盖所有引擎</td></tr>
+      <tr><td>2</td><td>任一信号 <code>confirmed_at</code> ≥ 候选时间 + confirm_bars，且 ≤ as_of</td></tr>
+      <tr><td>3</td><td><b>防重绘金标准</b>：切掉 as_of 之后的数据重算，与全量数据重算相比，as_of 之前的信号状态必须完全一致</td></tr>
+      <tr><td>4</td><td>同一根 K 线上两个相关指标不得重复计票</td></tr>
+      <tr><td>5</td><td>报告里每个结论都能点开看证据链（哪个引擎、哪根 K 线、什么状态、何时失效）</td></tr>
+    </table></div>
+  </div>
+</section>
+
+<section>
+  <h2>九、需要你拍板的 6 个问题</h2>
+  <div class="card quests">
+    <div class="quest"><div class="n"></div><div class="body"><b>复盘对象</b><small>纯个股技术面复盘（code + as_of 出报告），还是要支持导入你自己的交易记录做归因？后者价值更高，但要多做 0.5 天。</small></div></div>
+    <div class="quest"><div class="n"></div><div class="body"><b>MVP 先上哪 4 个引擎</b><small>建议：量价分布 / SMC / 背离 / 形态（Python 友好，且与你截图里的模块一一对应）。缠论和威科夫放二期。</small></div></div>
+    <div class="quest"><div class="n"></div><div class="body"><b>现有 8 模块系统的代码在哪</b><small>只需路径和接口形式（有无 JSON 输出），我来判断是对接还是自带实现。默认按"自带轻量实现"推进，不依赖它。</small></div></div>
+    <div class="quest"><div class="n"></div><div class="body"><b>数据层</b><small>默认方式 A（AI 拉数落盘 csv/duckdb，模块零外部依赖）。后续要自动更新再切方式 B（tushare，需你提供 token）。</small></div></div>
+    <div class="quest"><div class="n"></div><div class="body"><b>评分权重</b><small>沿用聊天记录的 25/20/20/15/10/10，还是按你的偏好调？做成配置文件，随时可改。</small></div></div>
+    <div class="quest"><div class="n"></div><div class="body"><b>输出形态</b><small>HTML 画像报告 + JSON 够不够？要不要再加 Excel（方便你放 Excel 里看）？</small></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>十、整体建议（一句话版）</h2>
+  <div class="card good" style="border-left-width:4px">
+    <p><b>值得做，别贪大。</b>第一版就做 4 个引擎 + 三态状态机 + 防未来函数闸门 + 共振投票 + 评分卡 + HTML 画像报告，4 人日交付一个<b>每个结论都能审计</b>的画像模块。缠论、威科夫、道氏这些规则重、口径乱的放二期，等第一版跑通、你认可输出质量后再扩。</p>
+    <p style="margin-top:8px">开源项目的正确打开方式不是"把代码搬进来"，而是<b>把它的算法规则和输出契约搬进来，再用你自己的样本对拍验证</b>——聊天记录里的 GPT 这点说得对，我完全同意。</p>
+  </div>
+</section>
+
+<footer>
+  MVP 开发专家团 · 项目总监编制 ｜ 确认第九节 6 个问题后，即启动 Phase 1（PM 竞品调研 / 架构师选型 / 设计师画像版式，三方并行）
+</footer>
+
+</div>
+</body>
+</html>
